@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>PVP Legacy Light Solver</title>
+        <meta charset="utf-8"/>
+        <link rel="icon" type="image/png" href="favicon.png">
+        <style>
+body {
+    margin: 0;
+    font-family: sans-serif;
+    text-align: center;
+    background: #404040;
+}
+
+.content-wrapper {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.content {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: center;
+}
+
+.content .canvas canvas {
+    cursor: pointer;
+    border: 3px solid transparent;
+}
+
+.content .control-panel button {
+    margin: 3% 50%;
+    padding: .5em 0;
+    width: 9em;
+    font-size: 1em;
+    background: transparent;
+    border: 2px solid #00ffff;
+    border-radius: 5px;
+    color: #00ffff;
+    cursor: pointer;
+    transition: background .1s ease-in;
+}
+
+.content .control-panel button:hover {
+    background: #00ffff;
+    color: #404040;
+}
+
+.content .control-panel button:active {
+    border-color: blue;
+    background: blue;
+}
+
+.content .control-panel button:disabled {
+    filter: grayscale(100%);
+    pointer-events: none;
+}
+
+#error, #align_margin {
+    visibility: hidden;
+    color: blue;
+    font-size: 1.5em;
+}
+        </style>
+    </head>
+    <body>
+        <div class="content-wrapper">
+            <p id="align_margin">-</p>
+            <div class="content">
+                <div class="canvas" style="display: flex; flex-direction: row; align-items: center;">
+    <p style="writing-mode: vertical-rl; transform: rotate(180deg); color: #00ffff; margin-right: 10px; font-size: 1.5em; font-weight: bold;">Anaur Door</p>
+
+    <div style="display: flex; flex-direction: column; align-items: center;">
+        <p style="color:#00ffff; margin-bottom:10px; font-size: 1.5em; font-weight: bold;">Strength Door</p>
+        <canvas></canvas>
+        <p style="color:#00ffff; margin-top:10px; font-size: 1.5em; font-weight: bold;">Entrance Door</p>
+    </div>
+
+    <p style="writing-mode: vertical-rl; color: #00ffff; margin-left: 10px; font-size: 1.5em; font-weight: bold;">Ithil Door</p>
+</div>
+
+
+
+
+                <div class="control-panel">
+                    <button id="edit">Edit Pannel</button>
+                    <button id="solve_sun">Solve for Anaur (Light Gem)</button>
+                    <button id="solve_moon">Solve for Ithil (Dark Gem)</button>
+                    <button id="solve_strength">Solve for Trial By Strength</button>
+                </div>
+            </div>
+            <p id="error">No solution found!</p>
+        </div>
+        <script type="text/javascript">
+
+// inspired by https://raw.org/research/solving-lightsout-using-linear-algebra/
+
+
+
+// config
+
+// must be a square matrix
+const node_matrix = [
+    0, 1, 0, 1, 0, 1, 0,
+    1, 1, 1, 1, 1, 1, 1,
+    0, 1, 1, 1, 1, 0, 0,
+    1, 1, 1, 1, 1, 1, 1,
+    0, 0, 1, 1, 1, 1, 0,
+    1, 1, 1, 1, 1, 1, 1,
+    0, 1, 0, 1, 0, 1, 0
+];
+
+const node_matrix_width = 7; // assumed to be equal to height
+
+
+
+
+
+// declarations
+
+const adj_matrix_width = node_matrix_width ** 2; // node_matrix.length
+const adj_matrix = new Array(adj_matrix_width).fill(0);
+
+const node_radius = 15;
+const node_gap = 50;
+const offset_x = node_gap / 2;
+const offset_y = node_gap / 2;
+
+const canvas = document.querySelector("canvas");
+const ctx = canvas.getContext("2d");
+
+canvas.width = 2 * offset_x + node_gap * (node_matrix_width - 1);
+canvas.height = 2 * offset_y + node_gap * (node_matrix_width - 1);
+
+const edit = document.querySelector("#edit");
+const solve_sun = document.querySelector("#solve_sun");
+const solve_moon = document.querySelector("#solve_moon");
+const solve_strength = document.querySelector("#solve_strength");
+const error_modal = document.querySelector("#error");
+
+const active_solution = new Array(adj_matrix_width).fill(0);
+
+let EDIT_MODE = false;
+
+
+
+
+// setup
+
+loadInitial();
+resetNodes();
+render();
+
+
+
+
+
+// event handlers
+
+edit.addEventListener("click", () => {
+    EDIT_MODE = !EDIT_MODE;
+    solve_sun.disabled = EDIT_MODE;
+    solve_moon.disabled = EDIT_MODE;
+    edit.textContent = ["Edit", "Finish"][+EDIT_MODE];
+    canvas.style.border = ["3px solid transparent", "3px solid #00ffff"][+EDIT_MODE];
+    canvas.style.cursor = ["pointer", "crosshair"][+EDIT_MODE];
+
+    resetSolution();
+    render();
+});
+
+solve_sun.addEventListener("click", () => {
+    const pattern = [];
+    for (let i = 0; i < node_matrix.length; i++) {
+        pattern[i] = +!node_matrix[i];
+    }
+    gaussSolve(pattern);
+    render();
+});
+
+solve_moon.addEventListener("click", () => {
+    gaussSolve(node_matrix);
+    render();
+});
+
+solve_strength.addEventListener("click", () => {
+    const pattern = [
+        0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0
+    ];
+    for (let i = 0; i < node_matrix.length; i++) {
+        pattern[i] = (node_matrix[i] + pattern[i]) % 2;
+    }
+    gaussSolve(pattern);
+    render();
+});
+
+
+canvas.addEventListener("click", (e) => {
+    const element = e.currentTarget.getBoundingClientRect();
+    const node_index = Math.trunc((e.clientX - element.left) / 50) + Math.trunc((e.clientY - element.top) / 50) * node_matrix_width;
+    if (EDIT_MODE) {
+        node_matrix[node_index] = +!node_matrix[node_index];
+    } else {
+        active_solution[node_index] = 0;
+        for (let i = 0; i < adj_matrix_width; i++) {
+            if (adj_matrix[node_index + i * adj_matrix_width])
+                node_matrix[i] = +!node_matrix[i];
+        }
+    }
+    render();
+});
+
+
+
+
+
+// core functions
+
+function render() {
+    ctx.strokeStyle = "blue";
+    ctx.lineWidth = 3;
+
+    for (let i = 0; i < node_matrix_width; i++) {
+        for (let j = 0; j < node_matrix_width; j++) {
+            const node_index = i * node_matrix_width + j;
+
+            if (isAdjColNull(node_index)) continue;
+            if (node_matrix[node_index]) ctx.fillStyle = "#00ffff";
+            else ctx.fillStyle = "grey";
+
+            const x = j * node_gap + offset_x;
+            const y = i * node_gap + offset_y;
+
+            ctx.clearRect(x - node_gap / 2, y - node_gap / 2, node_gap, node_gap);
+            ctx.beginPath();
+            ctx.arc(x, y, node_radius, 0, 2 * Math.PI);
+            ctx.fill();
+
+            if (!active_solution[node_index]) continue;
+            ctx.beginPath();
+            ctx.arc(x, y, node_radius + 1.5, 0, 2 * Math.PI);
+            ctx.stroke();
+        }
+    }
+}
+
+function loadInitial() {
+    for (let i = 0; i < node_matrix.length; i++) {
+        for (let j = 0; j < node_matrix.length; j++) {
+            if ((i === j || Math.abs(i - j) === 1 || Math.abs(i - j) === node_matrix_width) && node_matrix[i] && node_matrix[j])
+                adj_matrix[j * adj_matrix_width + i] = 1;
+            else
+                adj_matrix[j * adj_matrix_width + i] = 0;
+        }
+    }
+}
+
+
+
+
+// auxilliary functions
+
+function isAdjColNull(index, offset = 0) {
+    let result = 0;
+    for (let i = offset; i < adj_matrix_width; i++) {
+        result += adj_matrix[i * adj_matrix_width + index];
+    }
+    return !result;
+}
+
+function resetNodes() {
+    for (let i = 0; i < node_matrix.length; i++) {
+        node_matrix[i] = 0;
+    }
+}
+
+function resetSolution() {
+    for (let i = 0; i < active_solution.length; i++) {
+        active_solution[i] = 0;
+    }
+}
+
+function error() {
+    error_modal.style.visibility = "visible";
+    setTimeout(() => {
+        error_modal.style.visibility = "hidden";
+    }, 2000);
+}
+
+
+
+
+
+// Solves a linear equation system of form Ax = c (mod 2) ⁽¹⁾
+// where A is the adjacency matrix and c is the desired pattern.
+function gaussSolve(pattern) {
+    // Make copies of pattern and adj_matrix to preserve them.
+    const A = [...adj_matrix];
+    const c = [...pattern];
+
+    const x = active_solution;
+    let row_shift = 0;
+
+    // transform to row echelon form
+
+    for (let i = 0; i < adj_matrix_width; i++) {
+        if (isAdjColNull(i, row_shift)) continue;
+
+        if (!A[i + row_shift * adj_matrix_width]) {
+            for (let j = row_shift + 1; j < adj_matrix_width; j++) {
+                if (A[j * adj_matrix_width + i]) {
+                    swapRows(A, adj_matrix_width, j, row_shift);
+                    let temp = c[j];
+                    c[j] = c[row_shift];
+                    c[row_shift] = temp;
+                    c[j] %= 2;
+                    c[row_shift] %= 2;
+                    break;
+                }
+            }
+        }
+
+        for (let k = row_shift + 1; k < adj_matrix_width; k++) {
+            if (A[k * adj_matrix_width + i]) {
+                addRows(A, adj_matrix_width, k, row_shift);
+                c[k] += c[row_shift];
+                c[k] %= 2;
+            }
+        }
+
+        row_shift++;
+    }
+
+
+    // backwards substition of variables
+
+    let sol_initialized = false;
+
+    for (let i = adj_matrix_width; i >= 0; i--) {
+        for (let j = 0; j < adj_matrix_width; j++) {
+            if (A[i * adj_matrix_width + j]) {
+                if (!sol_initialized) {
+                    if (c[i])
+                        x[j] = c[i];
+                    else
+                        x[j] = 0;
+                    for (let k = j + 1; k < adj_matrix_width; k++) {
+                        x[k] = 0;
+                    }
+                    sol_initialized = true;
+                } else {
+                    let sum = 0;
+                    for (let k = j + 1; k < adj_matrix_width; k++) {
+                        sum += A[i * adj_matrix_width + k] * x[k];
+                    }
+                    sum %= 2;
+                    x[j] = +!(sum === c[i]);
+                }
+                break;
+            }
+        }
+    }
+
+
+    // check solution ⁽²⁾
+
+    for (let i = 0; i < adj_matrix_width; i++) {
+        if (isAdjColNull(i)) continue;
+
+        let sum = 0;
+
+        for (let j = 0; j < adj_matrix_width; j++) {
+            sum += adj_matrix[i * adj_matrix_width + j] * x[j];
+        }
+
+        sum %= 2;
+
+        if (sum !== pattern[i]) {
+            error();
+            resetSolution();
+            render();
+        }
+    }
+}
+
+function swapRows(mat, mat_width, r1, r2) {
+    for (let i = 0; i < mat_width; i++) {
+        let temp = mat[r1 * mat_width + i];
+        mat[r1 * mat_width + i] = mat[r2 * mat_width + i];
+        mat[r2 * mat_width + i] = temp;
+    }
+}
+
+function addRows(mat, mat_width, dest, src) {
+    for (let i = 0; i < mat_width; i++) {
+        mat[dest * mat_width + i] += mat[src * mat_width + i];
+        mat[dest * mat_width + i] %= 2;
+    }
+}
+        </script>
+    </body>
+</html>
