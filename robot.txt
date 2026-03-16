@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://lights-pvp-legacy-lore.pages.dev/sitemap.xml
